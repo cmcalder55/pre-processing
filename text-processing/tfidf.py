@@ -2,7 +2,11 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from tokenizer import Tokenizer
-
+import pandas as pd
+import numpy as np
+import nltk
+from sklearn.feature_extraction.text import TfidfVectorizer
+from scipy.stats import wilcoxon
 
 
 def get_dtm(sents):
@@ -83,20 +87,101 @@ def analyze_dtm(dtm, words, sents):
 
     return tfidf
 
-
-
 def gen_tfidf(texts, min_df=1.0, max_df=1.0, ngram_range=(1, 1)):
-    """
-    texts: a list of strings
-    """
-
-    # using default tokenizer in TfidfVectorizer
     tfidf = TfidfVectorizer(min_df=min_df, max_df=max_df, ngram_range=ngram_range)
-
     features = tfidf.fit_transform(texts)
+    return pd.DataFrame(features.todense(),
+                        columns=tfidf.get_feature_names_out())
 
-    df = pd.DataFrame(
-                    features.todense(),
-                    columns=tfidf.get_feature_names_out()
-                    )
-    return df
+def compute_sentiment(target, pos, neg):
+    sentiment = 0
+    p = sum(1 for word in target if word in pos)
+    n = sum(1 for word in target if word in neg)
+    if p + n != 0:
+        sentiment = (p - n) / (p + n)
+    return sentiment
+
+def sentiment(gen_tokens, ref_tokens, pos, neg):
+    print(gen_tokens)
+    tokens = lambda token_list: [compute_sentiment(sublist, pos, neg) for sublist in token_list]
+
+    result = pd.DataFrame({'gen_sentiment': tokens(gen_tokens), 
+                           'ref_sentiment': tokens(ref_tokens)})
+
+    avg = (result['gen_sentiment'] - result['ref_sentiment']).mean()
+    res = wilcoxon(result['gen_sentiment'] - result['ref_sentiment'], alternative='greater')
+
+    print(f"Average Sentiment: {avg}\n")
+    print(f"Stat: {res.statistic}\nP-Value: {res.pvalue}\n")
+    return result
+
+def evaluate_performance(prob, truth, th):
+    """Compares the prediction with the ground truth labels to calculate
+    the confusion matrix as [[TN, FN],[FP,TP]], where:
+    * True Positives (TP): the number of correct positive predictions
+    * False Positives (FP): the number of postive predictives which actually are negatives
+    * True Negatives (TN): the number of correct negative predictions
+    * False Negatives (FN): the number of negative predictives which actually are positives
+
+    :return precision: TP/(TP+FP)
+    :return recall: TP/(TP+FN)
+    """
+    
+    conf = [[0, 0], [0, 0]]
+    classifiers = list(zip(prob, truth))
+
+    for p,t in classifiers:
+        guess = 0
+        if p > th:
+            guess = 1
+        if guess == t:
+                if guess == 0:
+                    conf[0][0] += 1
+                else:
+                    conf[1][1] += 1
+        else:
+            if guess == 0:
+                conf[0][1] += 1
+            else:
+                conf[1][0] += 1
+
+    [[TN,FN],[FP,TP]] = conf
+    prec = TP/(TP+FP)
+    rec = TP/(TP+FN)
+
+    performance = {
+        "R0": prec,
+        "R1": rec
+    }
+    return performance
+
+def bigram_precision_recall(gen_tokens, ref_tokens):
+    result = pd.DataFrame(columns = ['overlapping','precision','recall'])
+
+    gen_bigrams = [list(nltk.bigrams(tokens)) for tokens in gen_tokens]
+    ref_bigrams = [list(nltk.bigrams(tokens)) for tokens in ref_tokens]
+
+    bigrams = list(zip(gen_bigrams, ref_bigrams))
+
+    overlapping = []
+    precision = []
+    recall = []
+    for gen, ref in bigrams:
+        overlap = [tup1 for tup1 in gen for tup2 in ref if tup1 == tup2]
+        overlapping.append(list(set(overlap)))
+
+        prec = 0
+        if gen:
+            prec = len(overlap)/len(gen)
+        precision.append(prec)
+
+        rec = 0
+        if ref:
+            rec = len(overlap)/len(ref)
+        recall.append(rec)
+
+    result['overlapping'] = overlapping
+    result['precision'] = precision
+    result['recall'] = recall
+
+    return result

@@ -1,4 +1,8 @@
 
+import spacy
+from string import punctuation
+
+
 class Tokenizer():
     def __init__(self, mode="basic"):
         self.mode = mode
